@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IndexedDB Kanban</title>
+    <style>
+        /* --- CSS VARIABLES --- */
+        :root {
+            --glass-material: rgba(15, 15, 20, 0.25); 
+            --glass-border: rgba(255, 255, 255, 0.08);
+            --col-bg: rgba(0, 0, 0, 0.15);
+            --item-bg: rgba(255, 255, 255, 0.05);
+            --item-hover: rgba(255, 255, 255, 0.1);
+            --text-primary: #ffffff;
+            --text-secondary: rgba(255, 255, 255, 0.65);
+            --accent-blue: #0a84ff;
+            --accent-red: #ff453a;
+            --radius-lg: 24px;
+            --radius-md: 16px;
+            --radius-sm: 12px;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; outline: none; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            color: var(--text-primary);
+            overflow: hidden;
+            height: 100vh;
+            width: 100vw;
+            background: #000;
+            user-select: none; 
+            touch-action: none;
+        }
+
+        #bgVideo {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            object-fit: cover;
+            z-index: -100;
+        }
+
+        /* --- MOVABLE WIDGET --- */
+        #board-widget {
+            position: absolute;
+            top: 100px; left: 100px;
+            width: 900px;
+            height: 600px;
+            min-width: 500px;
+            min-height: 350px;
+            background: var(--glass-material);
+            backdrop-filter: blur(30px);
+            -webkit-backdrop-filter: blur(30px);
+            border: 1px solid var(--glass-border);
+            border-radius: var(--radius-lg);
+            box-shadow: 0 15px 40px rgba(0, 0, 0, 0.2);
+            display: flex;
+            flex-direction: column;
+            z-index: 100;
+            transform-origin: top right;
+            will-change: transform, width, height, top, left;
+        }
+
+        /* --- HEADER --- */
+        .widget-header {
+            height: 44px;
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 20px;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            flex-shrink: 0;
+            cursor: move; 
+        }
+
+        .drag-zone {
+            flex: 1;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .handle-pill {
+            width: 36px; height: 4px;
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 10px;
+        }
+
+        /* --- HEADER CONTROLS --- */
+        .header-controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            position: relative;
+            z-index: 999;
+        }
+
+        .backup-btn {
+            background: rgba(255,255,255,0.1);
+            border: none;
+            color: var(--text-secondary);
+            width: 24px; height: 24px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 12px;
+            display: flex; align-items: center; justify-content: center;
+            transition: 0.2s;
+        }
+        .backup-btn:hover { background: rgba(255,255,255,0.2); color: white; }
+
+        /* --- ZOOM SLIDER --- */
+        .scale-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            opacity: 0.7;
+            transition: opacity 0.2s;
+            padding: 5px;
+            background: rgba(0,0,0,0.2);
+            border-radius: 20px;
+            cursor: default;
+        }
+        .scale-wrapper:hover { opacity: 1; background: rgba(0,0,0,0.4); }
+
+        .scale-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; pointer-events: none; }
+        .custom-track { width: 80px; height: 4px; background: rgba(255,255,255,0.2); border-radius: 2px; position: relative; cursor: pointer; }
+        .custom-thumb { width: 14px; height: 14px; background: white; border-radius: 50%; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); box-shadow: 0 2px 5px rgba(0,0,0,0.3); cursor: grab; }
+        .custom-thumb:active { cursor: grabbing; }
+
+        /* --- CONTENT --- */
+        .drag-list { display: flex; flex: 1; gap: 15px; padding: 20px; overflow-x: auto; overflow-y: hidden; }
+        .drag-column { flex: 1; min-width: 240px; background-color: var(--col-bg); border-radius: var(--radius-md); display: flex; flex-direction: column; padding: 12px; border: 1px solid rgba(255,255,255,0.02); }
+        .header h1 { font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: var(--text-secondary); margin-bottom: 12px; text-align: center; }
+        .drag-item-list { flex: 1; overflow-y: auto; padding-right: 6px; display: flex; flex-direction: column; gap: 8px; pointer-events: auto; }
+        .drag-item-list::-webkit-scrollbar { width: 6px; }
+        .drag-item-list::-webkit-scrollbar-track { background: transparent; }
+        .drag-item-list::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 10px; border: 1px solid transparent; background-clip: content-box; }
+        .drag-item-list::-webkit-scrollbar-thumb:hover { background-color: rgba(255, 255, 255, 0.3); }
+        .drag-item { background-color: var(--item-bg); padding: 12px 14px; border-radius: var(--radius-sm); font-size: 0.95rem; display: flex; flex-direction: column; gap: 6px; transition: background 0.1s; position: relative; }
+        .drag-item:hover { background-color: var(--item-hover); }
+        .item-text { word-break: break-word; cursor: text; line-height: 1.4; user-select: text; }
+        .item-controls { display: flex; justify-content: flex-end; gap: 6px; opacity: 0; height: 0; overflow: hidden; transition: all 0.2s ease; }
+        .drag-item:hover .item-controls { opacity: 1; height: 24px; margin-top: 4px; }
+        .ctrl-btn { background: rgba(255,255,255,0.1); border: none; color: var(--text-primary); cursor: pointer; width: 24px; height: 24px; border-radius: 50%; font-size: 14px; display: flex; align-items: center; justify-content: center; }
+        .ctrl-btn:hover { background: rgba(255,255,255,0.3); }
+        .ctrl-btn.del:hover { background: rgba(255, 69, 58, 0.6); }
+
+        .add-btn-group { margin-top: 10px; }
+        .add-btn { background: transparent; color: var(--accent-blue); padding: 8px; cursor: pointer; border-radius: var(--radius-sm); font-size: 0.85rem; text-align: center; }
+        .add-btn:hover { background: rgba(10, 132, 255, 0.15); }
+        .solid { display: none; background-color: var(--accent-blue); color: white; }
+        .solid:hover { opacity: 0.9; }
+        .add-container { display: none; margin-top: 8px; background: rgba(0,0,0,0.2); border-radius: var(--radius-sm); padding: 10px; }
+        .add-item { width: 100%; min-height: 20px; color: white; font-size: 0.95rem; border: none; background: transparent; cursor: text; user-select: text; }
+        
+        .resize-handle { position: absolute; bottom: 0; right: 0; width: 30px; height: 30px; cursor: nwse-resize; z-index: 200; display: flex; align-items: flex-end; justify-content: flex-end; padding: 6px; }
+        .resize-icon { width: 10px; height: 10px; border-right: 2px solid rgba(255,255,255,0.4); border-bottom: 2px solid rgba(255,255,255,0.4); }
+        
+        #file-input { display: none; }
+    </style>
+</head>
+<body>
+
+    <video autoplay muted loop id="bgVideo">
+        <source src="background.mp4" type="video/mp4">
+    </video>
+
+    <div id="board-widget">
+        <div class="widget-header" id="drag-header">
+            <div style="width: 20px;"></div>
+            <div class="drag-zone"><div class="handle-pill"></div></div>
+            
+            <div class="header-controls" id="header-controls">
+                <button class="backup-btn" onclick="downloadData()" title="Backup to File">⬇</button>
+                <button class="backup-btn" onclick="document.getElementById('file-input').click()" title="Restore from File">⬆</button>
+                <input type="file" id="file-input" accept=".json" onchange="restoreData(this)">
+
+                <div class="scale-wrapper" id="scale-controls">
+                    <span class="scale-label">Zoom</span>
+                    <div class="custom-track" id="slider-track">
+                        <div class="custom-thumb" id="slider-thumb"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <ul class="drag-list">
+            <li class="drag-column">
+                <div class="header"><h1>To Do</h1></div>
+                <div class="drag-item-list" id="col-0"></div>
+                <div class="add-btn-group"><div class="add-btn" onclick="showInputBox(0)">+ New</div><div class="add-btn solid" onclick="hideInputBox(0)">Save</div></div>
+                <div class="add-container"><div class="add-item" contenteditable="true"></div></div>
+            </li>
+            <li class="drag-column">
+                <div class="header"><h1>Working</h1></div>
+                <div class="drag-item-list" id="col-1"></div>
+                <div class="add-btn-group"><div class="add-btn" onclick="showInputBox(1)">+ New</div><div class="add-btn solid" onclick="hideInputBox(1)">Save</div></div>
+                <div class="add-container"><div class="add-item" contenteditable="true"></div></div>
+            </li>
+            <li class="drag-column">
+                <div class="header"><h1>Done</h1></div>
+                <div class="drag-item-list" id="col-2"></div>
+                <div class="add-btn-group"><div class="add-btn" onclick="showInputBox(2)">+ New</div><div class="add-btn solid" onclick="hideInputBox(2)">Save</div></div>
+                <div class="add-container"><div class="add-item" contenteditable="true"></div></div>
+            </li>
+        </ul>
+        <div class="resize-handle" id="resize-corner"><div class="resize-icon"></div></div>
+    </div>
+
+<script>
+    // ===============================================
+    // 1. INDEXED DB (ROBUST STORAGE)
+    // ===============================================
+    const DB_NAME = "KanbanDB";
+    const DB_VERSION = 1;
+    let db;
+
+    // Initialize Database
+    const initDB = () => {
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open(DB_NAME, DB_VERSION);
+            request.onerror = (e) => console.error("DB Error", e);
+            request.onupgradeneeded = (e) => {
+                const db = e.target.result;
+                if (!db.objectStoreNames.contains("state")) {
+                    db.createObjectStore("state", { keyPath: "id" });
+                }
+            };
+            request.onsuccess = (e) => {
+                db = e.target.result;
+                resolve(db);
+            };
+        });
+    };
+
+    // Save Data
+    const saveData = (layout, content) => {
+        if(!db) return;
+        const transaction = db.transaction(["state"], "readwrite");
+        const store = transaction.objectStore("state");
+        store.put({ id: "layout", data: layout });
+        store.put({ id: "content", data: content });
+    };
+
+    // Load Data
+    const loadData = () => {
+        return new Promise((resolve) => {
+            if(!db) resolve(null);
+            const transaction = db.transaction(["state"], "readonly");
+            const store = transaction.objectStore("state");
+            const layoutReq = store.get("layout");
+            const contentReq = store.get("content");
+            
+            transaction.oncomplete = () => {
+                resolve({
+                    layout: layoutReq.result ? layoutReq.result.data : null,
+                    content: contentReq.result ? contentReq.result.data : null
+                });
+            };
+            transaction.onerror = () => resolve(null);
+        });
+    };
+
+    // ===============================================
+    // 2. APP LOGIC
+    // ===============================================
+    const board = document.getElementById("board-widget");
+    const dragHeader = document.getElementById("drag-header");
+    const resizeHandle = document.getElementById("resize-corner");
+    const scaleControls = document.getElementById("scale-controls");
+    const sliderTrack = document.getElementById("slider-track");
+    const sliderThumb = document.getElementById("slider-thumb");
+
+    let layout = { top: '100px', left: '100px', width: '900px', height: '600px', scale: 1.0 };
+    const listColumns = [document.getElementById("col-0"), document.getElementById("col-1"), document.getElementById("col-2")];
+    let listData = [[], [], []];
+    let saveTimeout = null;
+
+    function requestSave() {
+        if (saveTimeout) return;
+        saveTimeout = setTimeout(() => {
+            saveData(layout, listData);
+            saveTimeout = null;
+        }, 1000);
+    }
+
+    function forceSave() {
+        if (saveTimeout) clearTimeout(saveTimeout);
+        saveData(layout, listData);
+    }
+
+    async function startApp() {
+        await initDB();
+        const data = await loadData();
+        
+        if (data && data.layout) {
+            layout = { ...layout, ...data.layout };
+            board.style.top = layout.top;
+            board.style.left = layout.left;
+            board.style.width = layout.width;
+            board.style.height = layout.height;
+            updateScale(layout.scale);
+            updateThumbPosition(layout.scale);
+        }
+
+        if (data && data.content) {
+            listData = data.content;
+        } else {
+            // Default Welcome Message
+            listData = [["Install via 'Browse'"], ["Not drag & drop!"], ["Persistent Data"]];
+        }
+        renderLists();
+    }
+
+    // --- MANUAL BACKUP ---
+    window.downloadData = () => {
+        const blob = new Blob([JSON.stringify({layout, content: listData})], {type: "application/json"});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = "kanban-backup.json";
+        a.click();
+    };
+
+    window.restoreData = (input) => {
+        const file = input.files[0];
+        if(!file) return;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const json = JSON.parse(e.target.result);
+                if(json.layout) layout = json.layout;
+                if(json.content) listData = json.content;
+                applyLayout();
+                renderLists();
+                forceSave();
+                alert("Restored!");
+            } catch(err) { alert("Error reading file"); }
+        };
+        reader.readAsText(file);
+    };
+
+    function applyLayout() {
+        board.style.top = layout.top;
+        board.style.left = layout.left;
+        board.style.width = layout.width;
+        board.style.height = layout.height;
+        updateScale(layout.scale);
+        updateThumbPosition(layout.scale);
+    }
+
+    // --- SCALE LOGIC ---
+    let isScaling = false;
+    const MIN_SCALE = 0.5, MAX_SCALE = 1.5;
+
+    function updateScale(val) {
+        layout.scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, val));
+        board.style.transform = `scale(${layout.scale})`;
+    }
+    function updateThumbPosition(scaleVal) {
+        const pct = (scaleVal - MIN_SCALE) / (MAX_SCALE - MIN_SCALE) * 100;
+        sliderThumb.style.left = `${pct}%`;
+    }
+    function handleSliderMove(e) {
+        const rect = sliderTrack.getBoundingClientRect();
+        let x = e.clientX - rect.left;
+        if (x < 0) x = 0; if (x > rect.width) x = rect.width;
+        const newScale = MIN_SCALE + ((x / rect.width) * (MAX_SCALE - MIN_SCALE));
+        updateScale(newScale);
+        updateThumbPosition(newScale);
+        requestSave();
+    }
+    scaleControls.addEventListener("pointerdown", (e) => { e.stopPropagation(); if (e.button !== 0) return; isScaling = true; sliderThumb.setPointerCapture(e.pointerId); handleSliderMove(e); });
+    sliderThumb.addEventListener("pointerup", (e) => { isScaling = false; forceSave(); sliderThumb.releasePointerCapture(e.pointerId); });
+    sliderThumb.addEventListener("pointermove", (e) => { if (!isScaling) return; handleSliderMove(e); });
+
+    // --- DRAG/RESIZE LOGIC ---
+    let isMoving = false, isResizing = false;
+    let startX, startY, initLeft, initTop, initW, initH;
+
+    dragHeader.addEventListener("pointerdown", (e) => {
+        if (e.target.closest('#header-controls')) return;
+        if (e.button !== 0) return;
+        isMoving = true; startX = e.clientX; startY = e.clientY; initLeft = board.offsetLeft; initTop = board.offsetTop;
+        dragHeader.style.cursor = "grabbing"; dragHeader.setPointerCapture(e.pointerId);
+    });
+    resizeHandle.addEventListener("pointerdown", (e) => {
+        e.stopPropagation(); if (e.button !== 0) return;
+        isResizing = true; startX = e.clientX; startY = e.clientY; initW = board.offsetWidth; initH = board.offsetHeight;
+        resizeHandle.setPointerCapture(e.pointerId);
+    });
+    window.addEventListener("pointermove", (e) => {
+        if (e.buttons === 0) { if (isMoving || isResizing || isScaling) { isMoving = isResizing = isScaling = false; dragHeader.style.cursor = "move"; forceSave(); } return; }
+        if (isMoving) { board.style.left = `${initLeft + (e.clientX - startX)}px`; board.style.top = `${initTop + (e.clientY - startY)}px`; requestSave(); }
+        if (isResizing) {
+            const dx = (e.clientX - startX) / layout.scale; const dy = (e.clientY - startY) / layout.scale;
+            board.style.width = `${Math.max(500, initW + dx)}px`; board.style.height = `${Math.max(350, initH + dy)}px`; requestSave();
+        }
+    });
+    window.addEventListener("pointerup", (e) => { if (isMoving || isResizing) { isMoving = false; isResizing = false; dragHeader.style.cursor = "move"; forceSave(); if(dragHeader.hasPointerCapture(e.pointerId)) dragHeader.releasePointerCapture(e.pointerId); if(resizeHandle.hasPointerCapture(e.pointerId)) resizeHandle.releasePointerCapture(e.pointerId); } });
+
+    // --- CONTENT ---
+    function renderLists() {
+        listData.forEach((colArray, colIndex) => {
+            const colEl = listColumns[colIndex]; colEl.innerHTML = ""; 
+            colArray.forEach((text, itemIndex) => {
+                const li = document.createElement("li"); li.classList.add("drag-item");
+                const showLeft = colIndex > 0 ? '' : 'visibility:hidden;pointer-events:none;';
+                const showRight = colIndex < 2 ? '' : 'visibility:hidden;pointer-events:none;';
+                li.innerHTML = `
+                    <div class="item-text" contenteditable="true" oninput="handleInput(${colIndex}, ${itemIndex}, this)" onblur="cleanUpText(${colIndex}, ${itemIndex}, this)">${text}</div>
+                    <div class="item-controls">
+                        <button class="ctrl-btn" style="${showLeft}" onclick="moveItem(${colIndex}, ${itemIndex}, -1)">&#8592;</button>
+                        <button class="ctrl-btn del" onclick="deleteItem(${colIndex}, ${itemIndex})">&#215;</button>
+                        <button class="ctrl-btn" style="${showRight}" onclick="moveItem(${colIndex}, ${itemIndex}, 1)">&#8594;</button>
+                    </div>`;
+                colEl.appendChild(li);
+            });
+        });
+    }
+
+    window.handleInput = (col, idx, el) => { listData[col][idx] = el.innerText; requestSave(); };
+    window.cleanUpText = (col, idx, el) => { const txt = el.innerText.trim(); if(!txt) { listData[col].splice(idx, 1); renderLists(); } else { listData[col][idx] = txt; } forceSave(); };
+    window.showInputBox = (idx) => { document.querySelectorAll('.add-btn')[idx].style.display='none'; document.querySelectorAll('.solid')[idx].style.display='block'; document.querySelectorAll('.add-container')[idx].style.display='block'; setTimeout(() => document.querySelectorAll('.add-item')[idx].focus(), 50); };
+    window.hideInputBox = (idx) => { document.querySelectorAll('.add-btn')[idx].style.display='block'; document.querySelectorAll('.solid')[idx].style.display='none'; document.querySelectorAll('.add-container')[idx].style.display='none'; const txt = document.querySelectorAll('.add-item')[idx].textContent.trim(); if(txt) { listData[idx].push(txt); document.querySelectorAll('.add-item')[idx].textContent = ""; renderLists(); forceSave(); } };
+    window.deleteItem = (c, i) => { listData[c].splice(i, 1); renderLists(); forceSave(); };
+    window.moveItem = (c, i, d) => { listData[c + d].push(listData[c].splice(i, 1)[0]); renderLists(); forceSave(); };
+
+    // START
+    startApp();
+</script>
+</body>
+</html>
